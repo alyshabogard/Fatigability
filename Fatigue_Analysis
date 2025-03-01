@@ -1,0 +1,95 @@
+%% Fatigue Analysis - Optimized Version
+% This script automates MVC trials, fatigue contractions, and CAR calculations.
+
+clear; clc; close all;
+
+% ---------------------------
+% USER INPUTS
+% ---------------------------
+time = input('Enter "pre" or "post": ', 's');
+if ~ismember(time, {'pre', 'post'})
+    error('Invalid input. Please enter "pre" or "post".');
+end
+
+id = input('Enter subject ID: ', 's');
+bm = input('Enter body mass (kg): ');
+wl_pf = input('Enter weight of limb in plantar flexion (kg): ');
+wl_df = input('Enter weight of limb in dorsiflexion (kg): ');
+
+% Construct file paths
+csv_pf = sprintf('emg/c0%s_%s_pf_1.csv', id, time);
+csv_car = sprintf('emg/c0%s_%s_car_1.csv', id, time);
+csv_df = sprintf('emg/c0%s_%s_df_1.csv', id, time);
+
+% ---------------------------
+% LOAD & PROCESS DATA
+% ---------------------------
+newColumnNames = {'ta_s', 'ta_mv', 'sol_s', 'sol_mv', 'torque_s', 'torque_nm', 'event_s', 'event_marker'};
+pf = readtable(csv_pf, 'HeaderLines', 7, 'ReadVariableNames', false);
+pf.Properties.VariableNames = newColumnNames;
+
+car = readtable(csv_car, 'HeaderLines', 7, 'ReadVariableNames', false);
+car.Properties.VariableNames = newColumnNames;
+
+df = readtable(csv_df, 'HeaderLines', 7, 'ReadVariableNames', false);
+df.Properties.VariableNames = newColumnNames;
+
+% ---------------------------
+% FILTER TORQUE SIGNALS
+% ---------------------------
+order = 4;
+fs = 518.52; 
+fc = 25;
+wn = fc / (fs / 2);
+[b, a] = butter(order, wn, 'low');
+
+pf.torque_filt = filtfilt(b, a, pf.torque_nm) - wl_pf;
+car.torque_filt = filtfilt(b, a, car.torque_nm) - wl_pf;
+df.torque_filt = filtfilt(b, a, df.torque_nm) + wl_df;
+
+% ---------------------------
+% DEFINE MVC ONSETS & OFFSETS
+% ---------------------------
+mvcTrials = 3;
+pfmvc_onsets = zeros(1, mvcTrials);
+pfmvc_offsets = zeros(1, mvcTrials);
+
+figure(1);
+plot(pf.torque_s, pf.torque_filt, 'k-', 'LineWidth', 2);
+hold on;
+plot(pf.sol_s, pf.sol_mv * 100, 'b-', 'LineWidth', 1);
+xlabel('Time (s)'); ylabel('Torque (Nm) & EMG (µV)');
+title('Plantarflexion MVC Trials');
+
+for i = 1:mvcTrials
+    disp(['Select MVC onset and offset for trial ' num2str(i)]);
+    onset = ginput(1); offset = ginput(1);
+    pfmvc_onsets(i) = onset(1); pfmvc_offsets(i) = offset(1);
+    xline(onset(1), 'm', ['Onset ' num2str(i)]);
+    xline(offset(1), 'm', ['Offset ' num2str(i)]);
+end
+
+% ---------------------------
+% CALCULATE CENTRAL ACTIVATION RATIO (CAR)
+% ---------------------------
+car50 = computeCAR(pf, pfmvc_onsets, 0.05);
+car100 = computeCAR(pf, pfmvc_onsets, 0.1);
+carMVC = [car50, car100];
+
+% ---------------------------
+% SAVE RESULTS
+% ---------------------------
+results = table(id, bm, car50, car100);
+writetable(results, 'Fatigue_Results.csv');
+disp('Fatigue analysis completed. Results saved.');
+
+% ---------------------------
+% FUNCTION: Compute Central Activation Ratio (CAR)
+% ---------------------------
+function carValue = computeCAR(data, onsets, timeWindow)
+    carValue = zeros(length(onsets), 1);
+    for i = 1:length(onsets)
+        window = data.torque_s >= (onsets(i) - timeWindow) & data.torque_s <= onsets(i);
+        carValue(i) = mean(data.torque_filt(window)) * 100;
+    end
+end
