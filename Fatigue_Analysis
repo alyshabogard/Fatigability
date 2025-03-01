@@ -1,4 +1,4 @@
-%% Fatigue Analysis - Optimized Version
+%% Fatigue Analysis
 % This script automates MVC trials, fatigue contractions, and CAR calculations.
 
 clear; clc; close all;
